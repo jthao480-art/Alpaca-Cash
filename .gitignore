@@ -1,0 +1,47 @@
+﻿# Environment
+.env
+.env.local
+
+# Ledger files (use Railway persistent volume)
+blacklist.json
+deferred_stops.json
+data/trade_ledger.json
+*.log
+debug_*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# VS Code
+.vscode/
+
+# Test files
+test_*.py
+debug_*.py
+check_*.py
+fix_*.py
+
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+
+bot_state.json
+trading_bot.db
+bot_output.txt
+*.db
+output/
+backend/output/
+add_short_stops.py
+close_shorts.py
+analyze_ledger.py
+backfill_ledger.py
