@@ -9,7 +9,8 @@ from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import httpx
-from alpaca.trading.requests import OrderSide, TimeInForce, TrailingStopOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import TrailingStopOrderRequest
 
 from backend import config
 from backend.services.bars_service import get_latest_bar
