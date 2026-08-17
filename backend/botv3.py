@@ -45,7 +45,7 @@ from backend.services.trade_ledger_service import (
     save_ledger,
     _from_iso,
 )
-
+from backend.agents.tradetiq_agent import TradetiqAgent
 
 logger = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -422,7 +422,7 @@ class botV3:
         self._open_positions_cache: dict[str, float] | None = None
         self._bars_cache: dict[Any, Any] = {}
         self._news_cache: dict[Any, Any] = {}
-        self._last_loser_sweep: datetime | None = None
+        self._LAST_LOSER_SWEEP: datetime | None = None
         self._session_date: Any = None
 
         use_wave = bool(getattr(config, "USE_WAVE_AGENT", False))
@@ -458,6 +458,11 @@ class botV3:
         if use_intraday:
             self.agents.append(IntradayAgent())
             logger.info("IntradayAgent enabled (Ripple/Ares/Wave/Surge)")
+
+        use_tradetiq = bool(getattr(config, "USE_TRADETIQ_AGENT", False))
+        if use_tradetiq:
+            self.agents.append(TradetiqAgent())
+            logger.info("TradetiqAgent enabled")    
 
     def _reset_cycle_cache(self) -> None:
         self._open_positions_cache = None
@@ -550,6 +555,9 @@ class botV3:
             if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
                 logger.debug("loser_sweep_skip symbol=%s reason=too_many_failed_attempts", symbol)
                 continue
+            if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
+                logger.debug("loser_sweep_skip symbol=%s reason=too_many_failed_attempts", symbol)
+                continue
 
             in_cooldown, cooldown_until = is_in_cooldown(ledger, symbol)
             if in_cooldown:
@@ -598,7 +606,11 @@ class botV3:
                     logger.info("loser_sweep_submitted symbol=%s order_id=%s qty=%.4f", symbol, order_id, qty)
                 else:
                     _FAILED_SELL_ATTEMPTS[symbol] = _FAILED_SELL_ATTEMPTS.get(symbol, 0) + 1
-                    logger.warning("loser_sweep_failed symbol=%s qty=%.4f reason=no_order_id attempts=%d", symbol, qty, _FAILED_SELL_ATTEMPTS[symbol])
+                    logger.warning("loser_sweep_failed symbol=%s qty=%.4f attempts=%d", symbol, qty, _FAILED_SELL_ATTEMPTS[symbol])
+                    if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
+                        logger.warning("Blacklisting %s — too many failed sell attempts", symbol)
+                        BLACKLIST.add(symbol)
+                        _BOUGHT_THIS_SESSION.add(symbol)
                     if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
                         logger.warning("Blacklisting %s — too many failed sell attempts", symbol)
                         BLACKLIST.add(symbol)
@@ -912,19 +924,7 @@ class botV3:
                 _BOUGHT_THIS_SESSION.add(symbol)
                 logger.info("Short time exit cover: %s qty=%.0f", symbol, qty)
         except Exception:
-            logger.exception("_close_short_market failed symbol=%s", symbol)
-
-    async def _close_short_market(self, qty: float, symbol: str, ledger: Any) -> None:
-        """Buy to cover a short position at market."""
-        try:
-            from backend.execution import place_market_buy
-            order_id, _ = await place_market_buy(symbol, qty)
-            if order_id:
-                close_entry(ledger, symbol=symbol, order_id=order_id, exit_price=None, reason="time_exit_cover", cooldown_minutes=self.cooldown_minutes)
-                _BOUGHT_THIS_SESSION.add(symbol)
-                logger.info("Short time exit cover: %s qty=%.0f", symbol, qty)
-        except Exception:
-            logger.exception("_close_short_market failed symbol=%s", symbol)        
+            logger.exception("_close_short_market failed symbol=%s", symbol)         
 
     async def _intraday_time_exit_pass(self, ledger: Any) -> None:
         """Exit positions after validated hold window unless above gain threshold."""
@@ -940,7 +940,7 @@ class botV3:
                 open_entry = next(
                     (e for e in reversed(entries)
                      if e.get("status") == "open"
-                     and str(e.get("strategy", "")).lower() in ("intraday", "wave", "ares")),
+                     and str(e.get("strategy", "")).lower() in ("intraday", "wave", "ares", "tradetiq")),
                     None,
                 )
                 if not open_entry:
@@ -956,7 +956,12 @@ class botV3:
                         continue
                 trading_days = self._count_trading_days(created_at, now)
                 strategy = str(open_entry.get("strategy", "")).lower()
-                hold_days = 21 if strategy == "ares" else 5
+                if strategy == "nexus":
+                    hold_days = 35
+                elif strategy in ("ares", "tradetiq", "smarttiq"):
+                    hold_days = 21
+                else:
+                    hold_days = 5
                 if trading_days < hold_days:
                     continue
                 pos = pos_map.get(symbol)
@@ -969,7 +974,12 @@ class botV3:
                 current_price = float(pos.get("current_price", 0) or 0)
                 if entry_price > 0 and current_price > 0:
                     gain_pct = (current_price - entry_price) / entry_price
-                    threshold = 0.30 if strategy == "ares" else 0.15
+                    if strategy == "nexus":
+                        threshold = 0.40
+                    elif strategy in ("ares", "tradetiq", "smarttiq"):
+                        threshold = 0.30
+                    else:
+                        threshold = 0.15
                     if gain_pct > threshold:
                         logger.info(
                             "Time exit skipped for %s -- up %.1f%% (>%.0f%% threshold), letting trailing stop run",
@@ -1017,18 +1027,7 @@ class botV3:
                     await self._close_position_market(symbol, qty, "intraday_time_exit", ledger)
 
         except Exception:
-            logger.exception("_intraday_time_exit_pass failed")
-
-    def _count_trading_days(self, start: datetime, end: datetime) -> int:
-        count = 0
-        current = start.date()
-        end_date = end.date()
-        while current < end_date:
-            if current.weekday() < 5:
-                count += 1
-            current += timedelta(days=1)
-        return count
-        
+            logger.exception("_intraday_time_exit_pass failed")      
 
     async def _handle_signals(self, signals: list[dict[str, Any]]) -> None:
         global HALT_ENTRIES
@@ -1181,7 +1180,8 @@ class botV3:
                 # Intraday agent signals bypass volume ratio gate — they have own volume logic
                 _is_intraday = str(signal.get("agent", "")).lower() == "intraday"
                 _intraday_active = bool(metadata.get("intraday_active", False))
-                if not _is_intraday and not (volume_ratio >= self.volume_ratio_entry or breakout or volume_acceleration >= 0.95):
+                _is_tradetiq = str(signal.get("agent", "")).lower() == "tradetiq"
+                if not _is_intraday and not _is_tradetiq and not (volume_ratio >= self.volume_ratio_entry or breakout or volume_acceleration >= 0.95):
                     continue
                 if not spy_trend_up and score < 0.72:
                     logger.debug("Skipping %s — SPY downtrend, score %.2f below 0.72 threshold", symbol, score)
