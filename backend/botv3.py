@@ -573,9 +573,6 @@ class botV3:
             if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
                 logger.debug("loser_sweep_skip symbol=%s reason=too_many_failed_attempts", symbol)
                 continue
-            if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
-                logger.debug("loser_sweep_skip symbol=%s reason=too_many_failed_attempts", symbol)
-                continue
 
             in_cooldown, cooldown_until = is_in_cooldown(ledger, symbol)
             if in_cooldown:
@@ -625,10 +622,6 @@ class botV3:
                 else:
                     _FAILED_SELL_ATTEMPTS[symbol] = _FAILED_SELL_ATTEMPTS.get(symbol, 0) + 1
                     logger.warning("loser_sweep_failed symbol=%s qty=%.4f attempts=%d", symbol, qty, _FAILED_SELL_ATTEMPTS[symbol])
-                    if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
-                        logger.warning("Blacklisting %s — too many failed sell attempts", symbol)
-                        BLACKLIST.add(symbol)
-                        _BOUGHT_THIS_SESSION.add(symbol)
                     if _FAILED_SELL_ATTEMPTS.get(symbol, 0) >= _MAX_SELL_ATTEMPTS:
                         logger.warning("Blacklisting %s — too many failed sell attempts", symbol)
                         BLACKLIST.add(symbol)
@@ -834,7 +827,18 @@ class botV3:
                     continue
                 qty = float(getattr(p, "qty", 0) or 0)
                 if qty > 0:
-                    await self._close_position_market(getattr(p, "symbol", ""), qty, "eod_sweep", ledger)
+                    symbol = getattr(p, "symbol", "")
+                    # Skip EOD sweep for long-hold signals (SmartTiq/Nexus)
+                    _sym_entries = ledger.get(symbol, [])
+                    _sym_strategy = ""
+                    if isinstance(_sym_entries, list):
+                        _open = next((e for e in reversed(_sym_entries) if e.get("status") == "open"), None)
+                        if _open:
+                            _sym_strategy = str(_open.get("strategy", "")).lower()
+                    if _sym_strategy in ("smarttiq", "nexus"):
+                        logger.info("EOD sweep skipped for %s — long-hold signal (%s)", symbol, _sym_strategy)
+                        continue
+                    await self._close_position_market(symbol, qty, "eod_sweep", ledger)
             except Exception:
                 logger.exception("end_of_day_sweep failed symbol=%s", getattr(p, "symbol", "unknown"))
 
@@ -862,7 +866,31 @@ class botV3:
                         for t, s in zip(order_types, order_sides)
                         if s == "sell"
                     )
-                    if not has_trailing:
+                    # Skip trailing stop for long-hold signals (SmartTiq/Nexus)
+                    # These use hard stop only and exit via time exit
+                    ledger = load_ledger()
+                    _sym_entries = ledger.get(symbol, [])
+                    _sym_strategy = ""
+                    if isinstance(_sym_entries, list):
+                        _open = next((e for e in reversed(_sym_entries) if e.get("status") == "open"), None)
+                        if _open:
+                            _sym_strategy = str(_open.get("strategy", "")).lower()
+                    _is_long_hold = _sym_strategy in ("smarttiq", "nexus")
+                    if _is_long_hold and not has_hard_stop:
+                        price = await get_latest_price(symbol)
+                        if price:
+                            stop_price = round(price * 0.92, 2)
+                            from backend.execution import _post_order
+                            await _post_order({
+                                "symbol": symbol,
+                                "qty": str(int(qty)),
+                                "side": "sell",
+                                "type": "stop",
+                                "time_in_force": "gtc",
+                                "stop_price": str(stop_price),
+                            })
+                            logger.info("Long-hold %s — hard stop placed at %.2f (8%% below)", symbol, stop_price)
+                    if not has_trailing and not _is_long_hold:
                         logger.warning("Long %s — attempting trailing stop sell (has_hard_stop=%s)", symbol, has_hard_stop)
                         trail_id = await place_trailing_stop_sell(symbol, qty, trail_percent=5.0)
                         if trail_id:
