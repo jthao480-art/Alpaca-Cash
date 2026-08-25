@@ -275,7 +275,6 @@ async def main() -> None:
         logger.info("Symbol universe reloaded: %d symbols", len(symbols))
         if len(symbols) < 100:
             logger.critical("Symbol universe still too small (%d) — check LD_LIBRARY_PATH", len(symbols))
-        _last_deferred_check: str = ""   # track which regular session we last ran the deferred check
 
     while True:
         now = _now_et()
