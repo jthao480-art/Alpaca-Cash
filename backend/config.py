@@ -30,8 +30,7 @@ PAPER_TRADING = "paper" in ALPACA_BASE_URL.lower()
 
 MIN_VOLUME = int(_env.get("MIN_VOLUME", "100"))
 POSITION_SIZE_PCT = float(_env.get("POSITION_SIZE_PCT", "0.10"))  # 10% of buying power max
-MAX_POSITION_SIZE_USD = float(_env.get("MAX_POSITION_SIZE_USD", "10000"))  # $10K max per position
-BUY_THRESHOLD = float(_env.get("BUY_THRESHOLD", "0.60"))
+MAX_POSITION_SIZE_USD = float(_env.get("MAX_POSITION_SIZE_USD", "10000"))  # $10K max per positionBUY_THRESHOLD = float(_env.get("BUY_THRESHOLD", "0.60"))
 SELL_THRESHOLD = float(_env.get("SELL_THRESHOLD", "0.40"))
 TAKE_PROFIT_PCT = float(_env.get("TAKE_PROFIT_PCT", "0.04"))
 STOP_LOSS_PCT = float(_env.get("STOP_LOSS_PCT", "0.06"))
@@ -45,6 +44,7 @@ MAX_SHORT_LEVERAGE = float(_env.get("MAX_SHORT_LEVERAGE", "0.5"))
 MAX_CONCURRENT_SYMBOLS = int(_env.get("MAX_CONCURRENT_SYMBOLS", "10"))
 BATCH_SIZE = int(_env.get("BATCH_SIZE", "25"))
 MAX_POSITIONS = int(_env.get("MAX_POSITIONS", "25"))
+MIN_PRICE = float(_env.get("MIN_PRICE", "4.0"))
 BUY_POWER_CAP = float(_env.get("BUY_POWER_CAP", "0.20"))
 BUY_POWER_CAP_OVERNIGHT = float(_env.get("BUY_POWER_CAP_OVERNIGHT", "0.35"))
 BUY_POWER_CAP_EXTENDED = float(_env.get("BUY_POWER_CAP_EXTENDED", "0.25"))
@@ -61,7 +61,6 @@ USE_WAVE_PROVISIONAL = _env.get("USE_WAVE_PROVISIONAL", "true").lower() == "true
 USE_SURGE = _env.get("USE_SURGE", "true").lower() == "true"
 LOSER_EXIT_THRESHOLD = float(_env.get("LOSER_EXIT_THRESHOLD", "-0.05"))
 DATA_DIR = _env.get("DATA_DIR", ".")
-MIN_CASH_RESERVE = float(_env.get("MIN_CASH_RESERVE", "0.0"))
 USE_ARES_BEARISH = _env.get("USE_ARES_BEARISH", "false").lower() == "true"
 TRADETIQ_API_KEY = _env.get("TRADETIQ_API_KEY", "")
 TRADETIQ_BASE_URL = _env.get("TRADETIQ_BASE_URL", "https://tradetiq-production.up.railway.app")
@@ -115,3 +114,4 @@ def load_tradable_equities() -> list[str]:
 
 _env_symbols = [s.strip() for s in _env.get("SYMBOLS", "").split(",") if s.strip()]
 SYMBOLS = load_tradable_equities() if USE_ALL_TRADABLE else (_env_symbols or ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA"])
+SYMBOL_UNIVERSE = SYMBOLS[:]
