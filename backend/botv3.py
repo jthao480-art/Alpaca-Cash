@@ -1313,6 +1313,8 @@ class botV3:
                 logger.debug("Skipping %s — price %.2f below $%.2f minimum", symbol, price, min_price)
                 continue
             buying_power = float(get_account_buying_power() or 0.0)
+            min_cash_reserve = float(getattr(config, "MIN_CASH_RESERVE", 0.0))
+            buying_power = max(0.0, buying_power - min_cash_reserve)
             if buying_power <= 0:
                 continue
 
@@ -1417,9 +1419,10 @@ class botV3:
                 continue
 
             buying_power = float(get_account_buying_power() or 0.0)
+            min_cash_reserve = float(getattr(config, "MIN_CASH_RESERVE", 0.0))
+            buying_power = max(0.0, buying_power - min_cash_reserve)
             if buying_power <= 0:
                 continue
-
             max_position_usd = _cfg_any_float("MAX_POSITION_SIZE_USD", "MAX_POSITION_SIZE", default=10000.0)
             position_pct = _cfg_float("POSITION_SIZE_PCT", 0.10)
             buy_power_cap = float(getattr(self, "buy_power_cap", 1.0) or 1.0)

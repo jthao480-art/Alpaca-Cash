@@ -36,6 +36,7 @@ TAKE_PROFIT_PCT = float(_env.get("TAKE_PROFIT_PCT", "0.04"))
 STOP_LOSS_PCT = float(_env.get("STOP_LOSS_PCT", "0.06"))
 DAILY_LOSS_LIMIT_USD = float(_env.get("DAILY_LOSS_LIMIT_USD", "2000.0"))
 DAILY_LOSS_LIMIT = -float(_env.get("DAILY_LOSS_LIMIT_USD", "2000.0"))
+MIN_CASH_RESERVE = float(_env.get("MIN_CASH_RESERVE", "0.0"))
 HARD_STOP_TRIGGER_PCT = float(_env.get("HARD_STOP_TRIGGER_PCT", "-0.055"))
 SESSION_FLATTEN_TIME = _env.get("SESSION_FLATTEN_TIME", "15:45")
 USE_ALL_TRADABLE = _env.get("USE_ALL_TRADABLE", "false").lower() == "true"
