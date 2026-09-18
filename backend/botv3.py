@@ -1478,7 +1478,7 @@ class botV3:
         symbols = list(self.symbols)
         import random
         random.shuffle(symbols)
-        symbols = symbols[:1000]
+        symbols = symbols[:2000]
         for i in range(0, len(symbols), self.batch_size):
             batch = symbols[i: i + self.batch_size]
             try:
