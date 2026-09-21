@@ -1215,9 +1215,8 @@ class botV3:
                 _intraday_active = bool(metadata.get("intraday_active", False))
                 _is_tradetiq = str(signal.get("agent", "")).lower() == "tradetiq"
                 if not _is_intraday and not _is_tradetiq and not (volume_ratio >= self.volume_ratio_entry or breakout or volume_acceleration >= 0.95):
-                    if not True:  # TEMP: bypass volume filter for testing
-                        _skip("volume_filter")
-                        continue
+                    _skip("volume_filter")
+                    continue
                 if not spy_trend_up and score < 0.72:
                     _skip("spy_downtrend_score<0.72")
                     continue
@@ -1505,7 +1504,7 @@ class botV3:
         _now_et = datetime.now(ET)
         _market_open = _now_et.replace(hour=9, minute=30, second=0, microsecond=0)
         _entry_cutoff = _now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-        _within_hours = True  # TEMP: test after-hours signal processing
+        _within_hours = _market_open <= _now_et <= _entry_cutoff
         if all_signals and _within_hours:
             try:
                 await self._handle_signals(all_signals)
