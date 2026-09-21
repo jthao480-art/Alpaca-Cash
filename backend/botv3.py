@@ -1215,8 +1215,9 @@ class botV3:
                 _intraday_active = bool(metadata.get("intraday_active", False))
                 _is_tradetiq = str(signal.get("agent", "")).lower() == "tradetiq"
                 if not _is_intraday and not _is_tradetiq and not (volume_ratio >= self.volume_ratio_entry or breakout or volume_acceleration >= 0.95):
-                    _skip("volume_filter")
-                    continue
+                    if not True:  # TEMP: bypass volume filter for testing
+                        _skip("volume_filter")
+                        continue
                 if not spy_trend_up and score < 0.72:
                     _skip("spy_downtrend_score<0.72")
                     continue
