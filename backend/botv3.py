@@ -1504,7 +1504,7 @@ class botV3:
         _now_et = datetime.now(ET)
         _market_open = _now_et.replace(hour=9, minute=30, second=0, microsecond=0)
         _entry_cutoff = _now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-        _within_hours = _market_open <= _now_et <= _entry_cutoff
+        _within_hours = True  # TEMP: test after-hours signal processing
         if all_signals and _within_hours:
             try:
                 await self._handle_signals(all_signals)
