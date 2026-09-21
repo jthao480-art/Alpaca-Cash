@@ -42,6 +42,9 @@ SESSION_FLATTEN_TIME = _env.get("SESSION_FLATTEN_TIME", "15:45")
 USE_ALL_TRADABLE = _env.get("USE_ALL_TRADABLE", "false").lower() == "true"
 MAX_LEVERAGE = float(_env.get("MAX_LEVERAGE", "1.5"))
 MAX_SHORT_LEVERAGE = float(_env.get("MAX_SHORT_LEVERAGE", "0.5"))
+# Master switch for OPENING new shorts. Default OFF. Existing shorts are still
+# protected and covered regardless of this flag.
+ENABLE_SHORTS = _env.get("ENABLE_SHORTS", "false").lower() == "true"
 MAX_CONCURRENT_SYMBOLS = int(_env.get("MAX_CONCURRENT_SYMBOLS", "10"))
 BATCH_SIZE = int(_env.get("BATCH_SIZE", "25"))
 MAX_POSITIONS = int(_env.get("MAX_POSITIONS", "25"))
