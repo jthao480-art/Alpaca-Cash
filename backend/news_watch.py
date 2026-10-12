@@ -229,6 +229,7 @@ async def _restore_protection(symbol: str, qty: float) -> None:
     except Exception:
         logger.exception("news_watch: restoring protection failed for %s", symbol)
     if tid:
+        _tag_ledger_exit(symbol, None)
         logger.warning("GAP GUARD %s recovered by the open — premarket exit cancelled, trailing stop %.1f%% restored id=%s", symbol, trail, tid)
     else:
         logger.error("GAP GUARD %s — could not restore trailing stop; _protect_positions will retry", symbol)
@@ -308,6 +309,33 @@ async def _regular_exit(symbol: str, qty: float) -> Optional[str]:
     return await place_market_sell(symbol, qty)
 
 
+def _tag_ledger_exit(symbol: str, tag: Optional[str], reason: str = "") -> None:
+    """Record on the open ledger entry that a news/gap exit is in flight, so the
+    broker reconcile can close it as news_exit / gap_exit instead of the generic
+    alpaca_exit. tag=None clears it (used when a gap exit is recovered)."""
+    try:
+        from backend.services.trade_ledger_service import load_ledger, save_ledger
+        ledger = load_ledger()
+        entries = ledger.get(symbol, [])
+        entry = next((e for e in reversed(entries) if e.get("status") == "open"), None) if isinstance(entries, list) else None
+        if entry is None:
+            return
+        meta = entry.setdefault("metadata", {})
+        if tag is None:
+            if "exit_tag" not in meta:
+                return
+            meta.pop("exit_tag", None)
+            meta.pop("exit_reason", None)
+        else:
+            if meta.get("exit_tag") == tag:
+                return
+            meta["exit_tag"] = tag
+            meta["exit_reason"] = str(reason)[:200]
+        save_ledger(ledger)
+    except Exception:
+        logger.exception("news_watch: could not tag ledger exit for %s", symbol)
+
+
 async def _do_exit(symbol: str, qty: float, price: float, state: dict[str, Any]) -> None:
     dry = _cfg_b("NEWS_WATCH_DRY_RUN", False)
     regular = _is_regular_market_hours()
@@ -322,6 +350,7 @@ async def _do_exit(symbol: str, qty: float, price: float, state: dict[str, Any])
         state["attempt"] += 1
         state["regular"] = regular
         return
+    _tag_ledger_exit(symbol, "gap_exit" if state.get("kind") == "gap" else "news_exit", state.get("reason", ""))
     try:
         oid = await (_regular_exit(symbol, qty) if regular else _extended_exit(symbol, qty, price, state["attempt"]))
     except Exception:

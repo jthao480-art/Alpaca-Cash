@@ -66,10 +66,15 @@ async def reconcile_ledger_with_broker() -> int:
                     after=since,
                     limit=10,
                 ))
+                # alpaca-py returns enums here (OrderSide.SELL etc.); str() of those
+                # is "orderside.sell", which never matched "sell", so every reconciled
+                # exit used to fall through to "alpaca_exit" with no exit price. Read
+                # .value, and use order_type (alpaca-py's field name) with type as a fallback.
+                _ev = lambda x: str(getattr(x, "value", x) or "").lower()
                 for order in orders:
-                    side = str(getattr(order, "side", "")).lower()
-                    status = str(getattr(order, "status", "")).lower()
-                    order_type = str(getattr(order, "type", "")).lower()
+                    side = _ev(getattr(order, "side", ""))
+                    status = _ev(getattr(order, "status", ""))
+                    order_type = _ev(getattr(order, "order_type", None) or getattr(order, "type", ""))
                     if side == "sell" and status == "filled":
                         exit_price = float(getattr(order, "filled_avg_price", 0) or 0) or None
                         if "trailing" in order_type:
@@ -84,6 +89,10 @@ async def reconcile_ledger_with_broker() -> int:
             except Exception:
                 pass
 
+            # A news/gap exit placed by news_watch tags the entry; keep that label.
+            _tag = (entry.get("metadata") or {}).get("exit_tag")
+            if _tag:
+                close_reason = str(_tag)
             close_entry(
                 ledger,
                 symbol=symbol,
