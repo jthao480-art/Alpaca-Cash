@@ -1639,6 +1639,12 @@ class botV3:
         logger.debug("handle_signals_start signals=%d open_positions=%d", len(signals), len(open_positions))
         await self._liquidate_loser_sweep(ledger)
         await self._intraday_time_exit_pass(ledger)
+        # A sale cancels/replaces the resting stops, and the end-of-cycle
+        # _protect_positions can be minutes away (the buy loop below makes
+        # rate-limited price/news calls). Re-attach any missing stop NOW so
+        # no position sits naked after an exit. Idempotent: only acts on
+        # positions that have no stop; regular hours only.
+        await self._protect_positions()
         # _session_exit_pass (90-minute same-day timer) and _end_of_day_sweep
         # (force-flatten anything opened today by close) are intentionally not
         # called here. Both forced same-day exits regardless of signal type,
