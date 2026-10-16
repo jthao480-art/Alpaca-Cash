@@ -311,6 +311,7 @@ def _order_ctx(payload) -> str:
 
 
 async def _post_order(payload: dict) -> Optional[dict]:
+    _diag_order_log(payload)  # DIAG-CANCEL-LOG (temporary)
     url = f"{ALPACA_BASE_URL}/v2/orders"
     retryable_statuses = {429, 500, 502, 503, 504}
 
@@ -374,7 +375,44 @@ async def _get_order_by_id(order_id: str) -> Optional[dict]:
         return None
 
 
+# DIAG-CANCEL-LOG BEGIN -- temporary diagnostics, remove once the "other stops get
+# cancelled when one position is sold" issue is diagnosed and fixed.
+# Logs every order cancel with the chain of functions that asked for it, and every
+# market sell submission, so the cancels can be matched against Alpaca's order list.
+# Switch off without a redeploy: set CANCEL_DIAG_LOG=0 in Railway.
+def _diag_on() -> bool:
+    import os
+    return str(os.environ.get("CANCEL_DIAG_LOG", "1")).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _diag_cancel_log(order_id: str) -> None:
+    if not _diag_on():
+        return
+    try:
+        import traceback
+        frames = traceback.extract_stack(limit=9)[:-2]
+        chain = " <- ".join(f"{f.name}:{f.lineno}" for f in reversed(frames[-6:]))
+        logger.info("cancel order=%s via %s", str(order_id)[:8], chain)
+    except Exception:
+        pass
+
+
+def _diag_order_log(payload: dict) -> None:
+    if not _diag_on():
+        return
+    try:
+        if str(payload.get("side", "")).lower() == "sell" and str(payload.get("type", "")).lower() == "market":
+            import traceback
+            frames = traceback.extract_stack(limit=9)[:-2]
+            chain = " <- ".join(f"{f.name}:{f.lineno}" for f in reversed(frames[-6:]))
+            logger.info("market sell submitted symbol=%s qty=%s via %s",
+                        payload.get("symbol"), payload.get("qty"), chain)
+    except Exception:
+        pass
+# DIAG-CANCEL-LOG END
+
 async def _cancel_order_by_id(order_id: str) -> None:
+    _diag_cancel_log(order_id)  # DIAG-CANCEL-LOG (temporary)
     # Retry on rate limits / transient errors: during a buy burst a single
     # 429 here used to leave a bracket leg alive, and the live leg then held
     # the shares so the replacement trailing stop could never be placed.
