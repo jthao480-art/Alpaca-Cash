@@ -267,6 +267,10 @@ async def main() -> None:
     asyncio.create_task(monitor_held_news())
     from backend.news_buy import monitor_news_buys
     asyncio.create_task(monitor_news_buys())
+    from backend.pm_quick_exit import monitor_pm_quick_exit
+    asyncio.create_task(monitor_pm_quick_exit())
+    from backend.pm_signal_buy import monitor_pm_signal_buy
+    asyncio.create_task(monitor_pm_signal_buy())
 
     # Run one immediate protection sweep at startup
     if _is_regular_market_hours():
