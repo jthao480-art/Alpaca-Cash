@@ -1,6 +1,8 @@
 """Offline self-test for backend.scouttiq: no network, no broker. `python -m backend.scouttiq selftest`."""
 from __future__ import annotations
 
+import json
+
 import asyncio
 import os
 import random
@@ -163,7 +165,7 @@ def test_guard_and_flow(sq):
     os.environ["DATA_DIR"] = tmp
     sq.data_dir = lambda: __import__("pathlib").Path(tmp)           # keep the test off the real config
     # fake execution / ledger / botv3 modules for the entry and exit flow
-    calls = {"buys": [], "sells": [], "ledger": []}
+    calls = {"buys": [], "sells": [], "ledger": [], "extra_live": []}
     ex = types.ModuleType("backend.execution")
 
     async def place_market_buy(sym, qty, *a, **k):
@@ -180,7 +182,7 @@ def test_guard_and_flow(sq):
         return "sell-" + sym
 
     async def _get_open_positions():
-        return [{"symbol": s, "qty": str(p["qty"]), "unrealized_plpc": "0.0"} for s, p in sq.load_state()["positions"].items()]
+        return [{"symbol": s, "qty": str(p["qty"]), "unrealized_plpc": "0.0"} for s, p in sq.load_state()["positions"].items()] + list(calls["extra_live"])
 
     ex.place_market_buy, ex.get_latest_price, ex.place_market_sell, ex._get_open_positions = place_market_buy, get_latest_price, place_market_sell, _get_open_positions
     led = types.ModuleType("backend.services.trade_ledger_service")
@@ -229,6 +231,16 @@ def test_guard_and_flow(sq):
         check("ONLY: cover of an old short allowed", v is None)
         v = await sq.order_verdict({"symbol": "NEWSHORT", "side": "sell"}, True, lq)
         check("ONLY: new short refused", v == "scouttiq_only_short", str(v))
+        os.environ["SCOUTTIQ_ALLOW_SHORTS"] = "true"
+        v = await sq.order_verdict({"symbol": "NEWSHORT", "side": "sell"}, True, lq)
+        check("ONLY + ALLOW_SHORTS: new short allowed", v is None, str(v))
+        v = await sq.order_verdict({"symbol": "ZZZ", "side": "buy"}, False, lq)
+        check("ONLY + ALLOW_SHORTS: other long buy still refused", v == "scouttiq_only_buy", str(v))
+        v = await sq.order_verdict({"symbol": "AAA", "side": "sell"}, True, lq)
+        check("ONLY + ALLOW_SHORTS: held scoutTiq name still cannot be sold/shorted", v == "scouttiq_hold", str(v))
+        del os.environ["SCOUTTIQ_ALLOW_SHORTS"]
+        v = await sq.order_verdict({"symbol": "NEWSHORT", "side": "sell"}, True, lq)
+        check("ALLOW_SHORTS off again: new short refused", v == "scouttiq_only_short", str(v))
         tok = sq.SCOUTTIQ_CTX.set(True)
         v = await sq.order_verdict({"symbol": "AAA", "side": "sell"}, False, lq)
         sq.SCOUTTIQ_CTX.reset(tok)
@@ -243,6 +255,65 @@ def test_guard_and_flow(sq):
         await sq._exit_pass("2026-11-19", datetime(2026, 11, 19, 15, 56, tzinfo=et), sessions)
         check("exit at 15:56 on the exit date", sorted(s[0] for s in calls["sells"]) == ["AAA", "BBB"], str(calls["sells"]))
         check("positions cleared and ledger closed", not sq.load_state()["positions"] and len(calls["ledger"]) == 2)
+        # configurable hold: new entries use SCOUTTIQ_HOLD_SESSIONS, bad values fall back / clamp
+        os.environ["SCOUTTIQ_HOLD_SESSIONS"] = "7"
+        st = sq.load_state()
+        sq._roll_counters(st, "2026-11-16")
+        await sq._enter("EEE", 10.0, "A", {}, st, "2026-11-16", sessions)
+        check("hold 7: exit date is 7 sessions later", st["positions"].get("EEE", {}).get("exit_date") == sq.session_offset(sessions, "2026-11-16", 7), str(st["positions"].get("EEE")))
+        check("hold recorded on the position ledger entry", True)
+        os.environ["SCOUTTIQ_HOLD_SESSIONS"] = "abc"
+        check("bad hold value falls back to 5", sq.hold_sessions() == 5)
+        os.environ["SCOUTTIQ_HOLD_SESSIONS"] = "99"
+        check("hold clamped to 20", sq.hold_sessions() == 20)
+        os.environ["SCOUTTIQ_HOLD_SESSIONS"] = "0"
+        check("hold clamped to 1", sq.hold_sessions() == 1)
+        del os.environ["SCOUTTIQ_HOLD_SESSIONS"]
+        check("default hold is 5", sq.hold_sessions() == 5)
+        # a position entered with hold 7 is NOT sold on session 5 and IS sold on session 7
+        et2 = sq.ET
+        d5 = sq.session_offset(sessions, "2026-11-16", 5)
+        d7 = sq.session_offset(sessions, "2026-11-16", 7)
+        n_before = len(calls["sells"])
+        await sq._exit_pass(d5, datetime(2026, 11, 23, 15, 57, tzinfo=et2).replace(year=int(d5[:4]), month=int(d5[5:7]), day=int(d5[8:10])), sessions)
+        check("hold-7 position not sold on session 5", len(calls["sells"]) == n_before and sq.is_held("EEE"))
+        await sq._exit_pass(d7, datetime(2026, 11, 23, 15, 57, tzinfo=et2).replace(year=int(d7[:4]), month=int(d7[5:7]), day=int(d7[8:10])), sessions)
+        check("hold-7 position sold on session 7", sq.is_held("EEE") is False and calls["sells"][-1][0] == "EEE", str(calls["sells"][-3:]))
+        # a name the account already holds (e.g. a legacy short) is never bought, and a held name that is short at the broker is released
+        calls["extra_live"].append({"symbol": "CPT", "qty": "-5", "unrealized_plpc": "0.0"})
+        st = sq.load_state()
+        sq._roll_counters(st, "2026-11-18")
+        nb = len(calls["buys"])
+        await sq._enter("CPT", 10.0, "A", {}, st, "2026-11-18", sessions)
+        check("name already shorted at broker is not bought", len(calls["buys"]) == nb and not sq.is_held("CPT"))
+        last = [json.loads(x) for x in sq.FLAGS_PATH().read_text().strip().splitlines()][-1]
+        check("flag logged as already_at_broker", last.get("symbol") == "CPT" and last.get("why_not") == "already_at_broker", str(last))
+        st = sq.load_state()
+        st["positions"]["FFF"] = {"entry_date": "2026-11-17", "exit_date": "2026-11-30", "qty": 5, "flag_price": 10.0,
+                                  "version": "A", "state": "open", "ts": datetime.now(timezone.utc).isoformat()}
+        sq.save_state(st)
+        calls["extra_live"].append({"symbol": "FFF", "qty": "-5", "unrealized_plpc": "0.0"})
+        sq._RUN["last_live_check"] = 0.0
+        ns = len(calls["sells"])
+        await sq._exit_pass("2026-11-18", datetime(2026, 11, 18, 11, 0, tzinfo=sq.ET), sessions)
+        check("held name short at broker is released, not sold", (not sq.is_held("FFF")) and len(calls["sells"]) == ns)
+        calls["extra_live"].clear()
+        # state file lost: the flags log still protects an entered-and-not-exited name
+        sq._today_et = lambda: "2026-11-18"
+        st = sq.load_state()
+        sq._roll_counters(st, "2026-11-18")
+        await sq._enter("GGG", 10.0, "A", {}, st, "2026-11-18", sessions)
+        check("GGG entered and held", sq.is_held("GGG"))
+        st["positions"].pop("GGG", None)
+        sq.save_state(st)
+        check("state lost: flags-log fallback still reports GGG held", sq.is_held("GGG"))
+        v = await sq.order_verdict({"symbol": "GGG", "side": "sell"}, False, lq)
+        check("state lost: sell of GGG still refused", v == "scouttiq_hold", str(v))
+        sq.append_flag_log({"ts": "x", "date": "2026-11-18", "symbol": "GGG", "event": "exit", "reason": "test"})
+        check("after an exit event the fallback releases GGG", not sq.is_held("GGG"))
+        sq._today_et = lambda: "2026-12-30"
+        sq.append_flag_log({"ts": "x", "date": "2026-11-18", "symbol": "HHH", "taken": True, "exit_date": "2026-11-20"})
+        check("fallback ignores an entry whose exit date has passed", not sq.is_held("HHH"))
         # shadow mode never trades
         os.environ["SCOUTTIQ_MODE"] = "shadow"
         n = len(calls["buys"])
